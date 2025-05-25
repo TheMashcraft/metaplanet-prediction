@@ -9,6 +9,8 @@ from data_sources import (
     get_metaplanet_3350_data,
     get_bitcoin_historical_data
 )
+from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday, nearest_workday
+from pandas.tseries.offsets import CustomBusinessDay
 
 def get_bitcoin_holdings():
     """
@@ -129,16 +131,57 @@ def predict_bitcoin_price(historical_data, end_date="2030-12-31"):
     )
     return future_prices['Price']
 
+def is_tse_trading_day(date):
+    """Check if date is a Tokyo Stock Exchange trading day"""
+    # TSE is closed on weekends
+    if date.weekday() in [5, 6]:  # Saturday = 5, Sunday = 6
+        return False
+        
+    # Japanese holidays (simplified list - add more as needed)
+    holidays = [
+        "2024-01-01", "2024-01-02", "2024-01-03",  # New Year
+        "2024-01-08", "2024-02-12", "2024-02-23",  # Coming of Age, Foundation, Emperor's Birthday
+        "2024-03-20", "2024-04-29", "2024-05-03",  # Spring Equinox, Showa Day, Constitution
+        "2024-05-04", "2024-05-05", "2024-05-06",  # Greenery, Children's, Holiday
+        "2024-07-15", "2024-08-12", "2024-09-16",  # Marine, Mountain, Respect for Aged
+        "2024-09-23", "2024-10-14", "2024-11-03",  # Autumn Equinox, Sports, Culture
+        "2024-11-23", "2024-12-31"                 # Labor, Market Holiday
+    ]
+    return str(date.date()) not in holidays
+
 def simulate_through_2030(btc_data, meta_3350_data, initial_shares, btc_holdings, start_date=None, end_date="2030-12-31"):
     """Simulates Metaplanet metrics through 2030"""
-    # Setup simulation dates
+    # Use current date if no start date provided
+    if start_date is None:
+        start_date = datetime.now().date()
+    
     sim_start = pd.Timestamp(start_date)
     sim_end = pd.Timestamp(end_date)
-    future_dates = pd.date_range(start=sim_start, end=sim_end, freq='D')
+    
+    # Load historical BTC holdings from CSV and get final value
+    df = pd.read_csv('mp_btc.csv')
+    df['Reported'] = pd.to_datetime(df['Reported'])
+    df = df.sort_values('Reported')
+    initial_btc = float(df['BTC Holding'].iloc[-1])  # Use final historical value (7800)
     
     # Initialize simulation DataFrame
+    future_dates = pd.date_range(start=sim_start, end=sim_end, freq='D')
     simulation = pd.DataFrame(index=future_dates)
+    simulation['is_trading_day'] = simulation.index.map(is_tse_trading_day)
+    simulation['btc_holdings'] = initial_btc
     
+    # Track cumulative values
+    current_btc = initial_btc  # Start with historical final value
+    current_shares = float(initial_shares)
+    cumulative_btc_purchased = 0.0  # Track only new purchases
+    min_dilution_interval = 3  # Days between dilution events
+
+    # Calculate dilution decay parameters
+    start_annual_rate = 1.0  # 100% dilution at start
+    end_annual_rate = 0.10   # 10% dilution by 2030
+    total_days = (sim_end - sim_start).days
+    dilution_decay_rate = -np.log(end_annual_rate / start_annual_rate) / total_days
+
     # Add historical BTC prices where available
     historical_data = btc_data.reindex(future_dates)
     simulation['btc_price'] = historical_data['Close']
@@ -155,8 +198,6 @@ def simulate_through_2030(btc_data, meta_3350_data, initial_shares, btc_holdings
     simulation['btc_price'] = simulation['btc_price'].ffill()
     
     # Initialize starting values
-    current_shares = float(initial_shares)
-    current_btc = float(btc_holdings.iloc[-1] if not btc_holdings.empty else initial_shares)
     prev_stock_price = float(meta_3350_data['Close'].iloc[-1] if not meta_3350_data.empty else 5.0)
     
     # Initialize mNAV based on both models
@@ -177,9 +218,6 @@ def simulate_through_2030(btc_data, meta_3350_data, initial_shares, btc_holdings
     
     # Add dilution cycle counter
     days_since_dilution = 0
-    
-    # Initialize shares outstanding with constant value for historical dates
-    simulation['shares_outstanding'] = initial_shares
     
     for date in simulation.index:
         btc_price = simulation.loc[date, 'btc_price']
@@ -209,33 +247,49 @@ def simulate_through_2030(btc_data, meta_3350_data, initial_shares, btc_holdings
         volatility_factor = 1 + np.random.normal(0, base_vol_volatility)
         daily_volume = current_shares * base_daily_pct * mnav_factor * max(0.1, volatility_factor)
         
-        # Stock price calculation using combined mNAV
-        stock_price = (btc_value * current_mnav) / current_shares
-        
-        # Only apply dilution after start date
-        if date >= sim_start:
-            days_since_dilution += 1
-            price_increase = (stock_price / prev_stock_price - 1) if prev_stock_price > 0 else 0
-            if days_since_dilution >= 3 and stock_price >= prev_stock_price:
-                new_shares = daily_volume * 0.003  # 0.3% of daily volume
-                funds_raised = new_shares * stock_price
-                btc_purchased = funds_raised / btc_price
-                
-                current_shares += new_shares
-                current_btc += btc_purchased
-                days_since_dilution = 0  # Reset counter after dilution
+        # Only update stock price and apply dilution on trading days
+        if simulation.loc[date, 'is_trading_day']:
+            stock_price = (btc_value * current_mnav) / current_shares
             
-            simulation.loc[date, 'shares_outstanding'] = current_shares
+            if date >= sim_start:
+                days_since_dilution += 1
+                price_increase = (stock_price / prev_stock_price - 1) if prev_stock_price > 0 else 0
+                btc_purchased = 0.0
+                
+                if days_since_dilution >= min_dilution_interval and stock_price >= prev_stock_price:
+                    # Calculate current target annual dilution rate with decay
+                    current_annual_rate = start_annual_rate * np.exp(-dilution_decay_rate * days_from_start)
+                    daily_dilution_target = (1 + current_annual_rate) ** (1/365) - 1
+                    target_new_shares = current_shares * daily_dilution_target * min_dilution_interval
+                    
+                    # Use volume as a limiter - max 10% of daily volume
+                    volume_limit = daily_volume * 0.10
+                    new_shares = min(target_new_shares, volume_limit)
+                    
+                    # Calculate BTC purchases based on raised funds
+                    funds_raised = new_shares * stock_price
+                    btc_purchased = funds_raised / btc_price  # No artificial limit
+                    
+                    # Apply dilution
+                    current_shares += new_shares
+                    current_btc += btc_purchased
+                    cumulative_btc_purchased += btc_purchased
+                    days_since_dilution = 0
+                
+                simulation.loc[date, 'shares_outstanding'] = current_shares
+                simulation.loc[date, 'btc_purchased'] = btc_purchased
+                prev_stock_price = stock_price
+        else:
+            stock_price = prev_stock_price if prev_stock_price is not None else 5.0
+            simulation.loc[date, 'btc_purchased'] = 0.0
         
         # Store simulation results
         simulation.loc[date, 'stock_price'] = stock_price
-        simulation.loc[date, 'volume'] = daily_volume
+        simulation.loc[date, 'volume'] = daily_volume if simulation.loc[date, 'is_trading_day'] else 0
+        simulation.loc[date, 'shares_outstanding'] = current_shares
         simulation.loc[date, 'btc_holdings'] = current_btc
         simulation.loc[date, 'mnav'] = current_mnav
-        
-        prev_mnav = current_mnav
-        prev_stock_price = stock_price
-    
+
     # Forward fill any missing values in final results
     simulation = simulation.ffill()  # Use ffill() instead of fillna(method='ffill')
     
@@ -252,6 +306,21 @@ def plot_simulation_results(simulation):
     start_date = pd.Timestamp('2024-04-01')
     end_date = simulation.index[-1]
     date_formatter = plt.matplotlib.dates.DateFormatter('%Y-%m')
+
+    # Create complete BTC holdings series
+    complete_holdings = pd.Series(index=pd.date_range(start=start_date, end=end_date, freq='D'))
+    
+    # Add historical data
+    historical_dates = historical_df['Reported']
+    complete_holdings[historical_dates] = historical_df['BTC Holding']
+    complete_holdings = complete_holdings.ffill()  # Forward fill historical values
+    
+    # Add simulated data after last historical date
+    last_historical_date = historical_df['Reported'].max()
+    complete_holdings[simulation.index > last_historical_date] = simulation.loc[simulation.index > last_historical_date, 'btc_holdings']
+
+    # Update simulation's BTC holdings to match complete series
+    simulation['btc_holdings'] = complete_holdings[simulation.index]
     
     # Create figure
     fig = plt.figure(figsize=(15, 12))
@@ -272,22 +341,12 @@ def plot_simulation_results(simulation):
     
     # Holdings plot
     ax3 = fig.add_subplot(gs[1, 0])
-    last_historical_date = historical_df['Reported'].max()
-    ax3.plot(historical_df['Reported'], historical_df['BTC Holding'], 'b-', 
-            label='Historical Holdings', linewidth=2)
-    
-    future_data = simulation[simulation.index > last_historical_date].copy()
-    if not future_data.empty:
-        transition_point = pd.DataFrame({
-            'btc_holdings': historical_df['BTC Holding'].iloc[-1]
-        }, index=[last_historical_date])
-        future_data = pd.concat([transition_point, future_data])
-        ax3.plot(future_data.index, future_data['btc_holdings'], 'r--', 
-                label='Projected Holdings', linewidth=2)
+    ax3.plot(complete_holdings.index, complete_holdings.values, 'b-', label='BTC Holdings', linewidth=2)
+    ax3.set_ylabel('BTC Holdings')
+    ax3.set_title('Bitcoin Holdings')
 
     # Dynamic y-axis for BTC holdings
-    max_btc = max(historical_df['BTC Holding'].max(), simulation['btc_holdings'].max())
-    ax3.set_ylim(0, max_btc * 1.05)
+    ax3.set_ylim(0, complete_holdings.max() * 1.05)
     
     # Shares outstanding with dynamic y-axis
     ax4 = fig.add_subplot(gs[1, 1])
@@ -301,10 +360,14 @@ def plot_simulation_results(simulation):
     ax5.plot(simulation.index, simulation['mnav'], 'r-', label='mNAV', linewidth=2)
     ax5.set_ylim(simulation['mnav'].min() * 0.95, simulation['mnav'].max() * 1.05)
     
-    # Volume with dynamic y-axis
+    # Replace volume plot with dilution plot
     ax6 = fig.add_subplot(gs[2, 1])
-    ax6.plot(simulation.index, simulation['volume'], 'b-', label='Daily Volume', linewidth=2)
-    ax6.set_ylim(simulation['volume'].min() * 0.95, simulation['volume'].max() * 1.05)
+    diluted_shares = simulation['shares_outstanding'].diff()
+    diluted_shares[0] = 0  # Set first day's dilution to 0
+    ax6.plot(simulation.index, diluted_shares, 'g-', label='Daily Share Dilution', linewidth=2)
+    ax6.set_ylabel('Shares Issued')
+    ax6.set_title('Daily Share Dilution')
+    ax6.set_ylim(0, diluted_shares.max() * 1.05)
     
     # Common settings for all plots
     for ax in [ax1, ax2, ax3, ax4, ax5, ax6]:
@@ -380,4 +443,3 @@ if __name__ == "__main__":
     # Example usage: provide your own start_date, initial_shares, and initial_btc
     # simulation_results = run_complete_simulation("2024-04-01", "2030-12-31", 1234567, 100)
     simulation_results = run_complete_simulation()
-

@@ -43,11 +43,11 @@ def predict_bitcoin_prices(start_date, end_date, last_price):
     _, future_center, _ = btc_power_law_formula(future_dates)
     
     t = np.arange(len(future_df))
-    # Increased Weierstrass weights by 10%
+    # Doubled Weierstrass weights
     configs = [
-        {'a': 0.5, 'b': 3, 'n_terms': 10, 'weight': 0.363, 'scale': 1/730},  # Increased by 10%
-        {'a': 0.8, 'b': 2.5, 'n_terms': 8, 'weight': 0.242, 'scale': 1/1825},  # Increased by 10%
-        {'a': 0.3, 'b': 2.2, 'n_terms': 6, 'weight': 0.121, 'scale': 1/180}   # Increased by 10%
+        {'a': 0.5, 'b': 3, 'n_terms': 10, 'weight': 0.726, 'scale': 1/730},  # Doubled from 0.363
+        {'a': 0.8, 'b': 2.5, 'n_terms': 8, 'weight': 0.484, 'scale': 1/1825},  # Doubled from 0.242
+        {'a': 0.3, 'b': 2.2, 'n_terms': 6, 'weight': 0.242, 'scale': 1/180}   # Doubled from 0.121
     ]
     w = multi_weierstrass(t, configs)
     
@@ -57,7 +57,7 @@ def predict_bitcoin_prices(start_date, end_date, last_price):
     prices[0] = initial_price
 
     # Calculate initial trend using linear regression on last 30 days
-    transition_days = 90
+    transition_days = 180  # Doubled transition period
     if isinstance(last_price, pd.Series) and len(last_price) >= 90:
         X = np.arange(90).reshape(-1, 1)
         y = last_price[-90:].values
@@ -70,19 +70,18 @@ def predict_bitcoin_prices(start_date, end_date, last_price):
     else:
         initial_trend = 0
 
-    # Smooth transition period (90 days)
+    # Smooth transition period (180 days instead of 90)
     for i in range(1, len(future_df)):
         if i < transition_days:
-            # More weight on power law during transition
             trend_price = initial_price + (initial_trend * i)
             power_law_price = future_center[i]
-            blend_factor = (i / transition_days) ** 1.5  # Changed from quadratic to favor power law
+            # Smoother transition curve
+            blend_factor = 0.5 * (1 - np.cos(np.pi * i / transition_days))
             base_price = (1 - blend_factor) * trend_price + blend_factor * power_law_price
             
-            # Increased volatility overall
-            volatility_factor = blend_factor * 0.55  # Increased from 0.5
+            volatility_factor = blend_factor * 0.45  # Reduced from 0.55
             osc = w[i] * volatility_factor
-            amplitude = 0.44 * base_price * volatility_factor  # Increased from 0.4
+            amplitude = 0.35 * base_price * volatility_factor  # Reduced from 0.44
             prices[i] = base_price + osc * amplitude
         else:
             # More power law influence but slightly more volatility
