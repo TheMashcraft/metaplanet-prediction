@@ -29,16 +29,35 @@ def multi_weierstrass_mnav(t, days_scale=30):
     return wsum / np.max(np.abs(wsum))
 
 def calculate_mnav_with_volatility(btc_value, days_from_start):
-    """Calculate mNAV with Weierstrass volatility"""
+    """Calculate mNAV with Weierstrass volatility and mean reversion"""
     # Base power law mNAV calculation
     theoretical_mcap = 35.1221 * (btc_value ** 0.91)
     power_law_mnav = theoretical_mcap / btc_value
     
-    # Add Weierstrass volatility with 5x amplitude
+    # Add faster exponential decay to volatility
+    decay_factor = np.exp(-0.0003 * days_from_start)  # Slightly faster decay
+    
+    # Add Weierstrass volatility with mean reversion
     t = np.array([days_from_start])
-    volatility = 5.0 * multi_weierstrass_mnav(t)  # Increased by 500%
+    base_volatility = multi_weierstrass_mnav(t)
     
-    # Combine with 33% weight for Weierstrass
-    final_mnav = (0.67 * power_law_mnav) + (0.33 * power_law_mnav * (1 + volatility[0]))
+    # Target mNAV of 3.0 with overshooting
+    target_mnav = 3.0
+    current_mnav = power_law_mnav
     
-    return final_mnav
+    # Mean reversion factor (0.1 = 10% reversion per step)
+    reversion_speed = 0.1
+    
+    # Calculate mean reversion with overshooting
+    if current_mnav > target_mnav:
+        # Overshooting to the downside
+        reversion = (target_mnav - current_mnav) * reversion_speed * (1.2 + base_volatility[0])
+    else:
+        # Overshooting to the upside
+        reversion = (target_mnav - current_mnav) * reversion_speed * (1.3 + base_volatility[0])
+    
+    # Apply volatility and mean reversion
+    final_mnav = current_mnav + (reversion * decay_factor)
+    
+    # Ensure mNAV never goes below 1.0
+    return max(1.0, final_mnav)

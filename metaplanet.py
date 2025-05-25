@@ -5,6 +5,7 @@ import seaborn as sns
 from datetime import datetime, timedelta
 from matplotlib.gridspec import GridSpec
 from bitcoin_prediction import predict_bitcoin_prices
+from mnav_prediction import calculate_mnav_with_volatility
 from data_sources import (
     get_metaplanet_3350_data,
     get_bitcoin_historical_data
@@ -41,16 +42,18 @@ def get_bitcoin_holdings():
 
 def calculate_mnav(market_cap, btc_holdings, btc_price):
     """
-    Calculates mNAV based on natural log model of Bitcoin NAV in JPY
+    Calculates mNAV based on market cap and BTC value
     Returns: Series with mNAV values
     """
-    # Calculate total Bitcoin value in USD
     btc_value = btc_holdings * btc_price
-        
-    # mNAV is the ratio between market price and underlying BTC value per share
-    mnav = market_cap / btc_value
-    
-    return mnav
+    return market_cap / btc_value
+
+def predict_future_mnav(days_from_start, btc_value):
+    """
+    Predicts future mNAV using the Weierstrass volatility model
+    Returns: Float with predicted mNAV value
+    """
+    return calculate_mnav_with_volatility(btc_value, days_from_start)
 
 def calculate_btc_per_share(btc_holdings, outstanding_shares):
     """
@@ -227,23 +230,12 @@ def simulate_through_2030(btc_data, meta_3350_data, initial_shares, btc_holdings
     for date in simulation.index:
         btc_price = simulation.loc[date, 'btc_price']
         btc_value = current_btc * btc_price
+        days_from_start = (date - sim_start).days
         
-        # Calculate power law mNAV component
-        theoretical_mcap = 35.1221 * (btc_value ** 0.91)
-        power_law_mnav = theoretical_mcap / btc_value
-        
-        # Calculate sensitivity-based mNAV component
-        if date == simulation.index[0]:
-            sensitivity_mnav = prev_mnav
-        else:
-            btc_change = (btc_price - simulation['btc_price'].shift(1).loc[date]) / simulation['btc_price'].shift(1).loc[date]
-            sensitivity_mnav = prev_mnav * (1 + btc_change * 0.2)  # 5:1 sensitivity
-        
-        # Combine both mNAV models with 50/50 weight
-        current_mnav = 0.5 * power_law_mnav + 0.5 * sensitivity_mnav
+        # Calculate mNAV using imported function
+        current_mnav = calculate_mnav_with_volatility(btc_value, days_from_start)
         
         # Calculate volume with decay and mNAV influence
-        days_from_start = (date - sim_start).days
         decay_factor = np.exp(-decay_rate * days_from_start)
         base_daily_pct = 0.25 * decay_factor  # Decaying from 25% to 3%
         
