@@ -8,9 +8,9 @@ def btc_power_law_formula(index):
     genesis = pd.Timestamp('2009-01-03')
     days_since_genesis = (index - genesis).days.values.astype(float)
     days_since_genesis[days_since_genesis < 1] = 1
-    price = 10**-17 * (days_since_genesis ** 5.85)
+    price = 10**-17 * (days_since_genesis ** 5.8)
     support = 0.5 * price
-    resistance = 3.0 * price
+    resistance = 2.0 * price
     return support, price, resistance
 
 def weierstrass_function(t, a=0.5, b=3, n_terms=10):
@@ -43,11 +43,11 @@ def predict_bitcoin_prices(start_date, end_date, last_price):
     _, future_center, _ = btc_power_law_formula(future_dates)
     
     t = np.arange(len(future_df))
-    # Increased Weierstrass weights by 150%
+    # Increased Weierstrass weights by another 100%
     configs = [
-        {'a': 0.5, 'b': 3, 'n_terms': 10, 'weight': 0.908, 'scale': 1/730},    # Increased by 150%
-        {'a': 0.8, 'b': 2.5, 'n_terms': 8, 'weight': 0.605, 'scale': 1/1825},  # Increased by 150%
-        {'a': 0.3, 'b': 2.2, 'n_terms': 6, 'weight': 0.303, 'scale': 1/180}    # Increased by 150%
+        {'a': 0.5, 'b': 3, 'n_terms': 10, 'weight': 1.816, 'scale': 1/730},    # Doubled from 0.908
+        {'a': 0.8, 'b': 2.5, 'n_terms': 8, 'weight': 1.210, 'scale': 1/1825},  # Doubled from 0.605
+        {'a': 0.3, 'b': 2.2, 'n_terms': 6, 'weight': 0.606, 'scale': 1/180}    # Doubled from 0.303
     ]
     w = multi_weierstrass(t, configs)
     
@@ -73,16 +73,19 @@ def predict_bitcoin_prices(start_date, end_date, last_price):
     # Smooth transition period (180 days instead of 90)
     for i in range(1, len(future_df)):
         if i < transition_days:
+            # Calculate base price trend
             trend_price = initial_price + (initial_trend * i)
             power_law_price = future_center[i]
-            # Smoother transition curve
-            blend_factor = 0.5 * (1 - np.cos(np.pi * i / transition_days))
-            base_price = (1 - blend_factor) * trend_price + blend_factor * power_law_price
             
-            volatility_factor = blend_factor * 0.45  # Reduced from 0.55
-            osc = w[i] * volatility_factor
-            amplitude = 0.35 * base_price * volatility_factor  # Reduced from 0.44
-            prices[i] = base_price + osc * amplitude
+            # Calculate price difference to bridge
+            price_diff = power_law_price - trend_price
+            
+            # Use Weierstrass to create oscillating bridge between prices
+            blend_factor = 0.5 * (1 - np.cos(np.pi * i / transition_days))
+            weierstrass_component = w[i] * price_diff * blend_factor
+            
+            # Combine trend with Weierstrass oscillations
+            prices[i] = trend_price + weierstrass_component
         else:
             # More power law influence but slightly more volatility
             base_price = future_center[i]
