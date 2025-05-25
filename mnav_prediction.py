@@ -9,12 +9,12 @@ def weierstrass_function(t, a=0.5, b=3, n_terms=10):
     w = w / np.max(np.abs(w))
     return w
 
-def multi_weierstrass_mnav(t, days_scale=365):
+def multi_weierstrass_mnav(t, days_scale=30):
     """Generate combined Weierstrass functions for mNAV"""
     configs = [
         {'a': 0.4, 'b': 2.5, 'n_terms': 8, 'weight': 0.5, 'scale': 1/days_scale},
-        {'a': 0.6, 'b': 2.0, 'n_terms': 6, 'weight': 0.3, 'scale': 1/(days_scale*2)},
-        {'a': 0.3, 'b': 3.0, 'n_terms': 4, 'weight': 0.2, 'scale': 1/(days_scale/2)}
+        {'a': 0.6, 'b': 2.0, 'n_terms': 6, 'weight': 0.3, 'scale': 1/(days_scale*3)},
+        {'a': 0.3, 'b': 3.0, 'n_terms': 4, 'weight': 0.2, 'scale': 1/(days_scale/3)}
     ]
     
     wsum = np.zeros_like(t, dtype=float)
@@ -34,9 +34,9 @@ def calculate_mnav_with_volatility(btc_value, days_from_start):
     theoretical_mcap = 35.1221 * (btc_value ** 0.91)
     power_law_mnav = theoretical_mcap / btc_value
     
-    # Add Weierstrass volatility
+    # Add Weierstrass volatility with 5x amplitude
     t = np.array([days_from_start])
-    volatility = multi_weierstrass_mnav(t)
+    volatility = 5.0 * multi_weierstrass_mnav(t)  # Increased by 500%
     
     # Combine with 33% weight for Weierstrass
     final_mnav = (0.67 * power_law_mnav) + (0.33 * power_law_mnav * (1 + volatility[0]))

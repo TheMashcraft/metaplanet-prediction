@@ -43,11 +43,11 @@ def predict_bitcoin_prices(start_date, end_date, last_price):
     _, future_center, _ = btc_power_law_formula(future_dates)
     
     t = np.arange(len(future_df))
-    # Doubled Weierstrass weights
+    # Increased Weierstrass weights by 150%
     configs = [
-        {'a': 0.5, 'b': 3, 'n_terms': 10, 'weight': 0.726, 'scale': 1/730},  # Doubled from 0.363
-        {'a': 0.8, 'b': 2.5, 'n_terms': 8, 'weight': 0.484, 'scale': 1/1825},  # Doubled from 0.242
-        {'a': 0.3, 'b': 2.2, 'n_terms': 6, 'weight': 0.242, 'scale': 1/180}   # Doubled from 0.121
+        {'a': 0.5, 'b': 3, 'n_terms': 10, 'weight': 0.908, 'scale': 1/730},    # Increased by 150%
+        {'a': 0.8, 'b': 2.5, 'n_terms': 8, 'weight': 0.605, 'scale': 1/1825},  # Increased by 150%
+        {'a': 0.3, 'b': 2.2, 'n_terms': 6, 'weight': 0.303, 'scale': 1/180}    # Increased by 150%
     ]
     w = multi_weierstrass(t, configs)
     

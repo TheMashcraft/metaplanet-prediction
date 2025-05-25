@@ -176,11 +176,16 @@ def simulate_through_2030(btc_data, meta_3350_data, initial_shares, btc_holdings
     cumulative_btc_purchased = 0.0  # Track only new purchases
     min_dilution_interval = 3  # Days between dilution events
 
-    # Calculate dilution decay parameters
-    start_annual_rate = 1.0  # 100% dilution at start
-    end_annual_rate = 0.10   # 10% dilution by 2030
+    # Calculate S-curve dilution parameters
+    peak_annual_rate = 1.0  # 100% dilution at peak
+    end_annual_rate = 0.33  # 33% dilution by 2030 (changed from 0.10)
     total_days = (sim_end - sim_start).days
-    dilution_decay_rate = -np.log(end_annual_rate / start_annual_rate) / total_days
+    steepness = 6.0 / total_days  # Controls S-curve steepness
+    
+    def get_dilution_rate(days_from_start):
+        """Calculate dilution rate using logistic decay function"""
+        # Start at peak and decay to end rate
+        return end_annual_rate + (peak_annual_rate - end_annual_rate) / (1 + np.exp(steepness * days_from_start))
 
     # Add historical BTC prices where available
     historical_data = btc_data.reindex(future_dates)
@@ -257,8 +262,8 @@ def simulate_through_2030(btc_data, meta_3350_data, initial_shares, btc_holdings
                 btc_purchased = 0.0
                 
                 if days_since_dilution >= min_dilution_interval and stock_price >= prev_stock_price:
-                    # Calculate current target annual dilution rate with decay
-                    current_annual_rate = start_annual_rate * np.exp(-dilution_decay_rate * days_from_start)
+                    # Get current target annual dilution rate from S-curve
+                    current_annual_rate = get_dilution_rate(days_from_start)
                     daily_dilution_target = (1 + current_annual_rate) ** (1/365) - 1
                     target_new_shares = current_shares * daily_dilution_target * min_dilution_interval
                     
@@ -310,14 +315,15 @@ def plot_simulation_results(simulation):
     # Create complete BTC holdings series
     complete_holdings = pd.Series(index=pd.date_range(start=start_date, end=end_date, freq='D'))
     
-    # Add historical data
+    # Add historical data up to last historical date
     historical_dates = historical_df['Reported']
+    last_historical_date = historical_dates.max()
     complete_holdings[historical_dates] = historical_df['BTC Holding']
-    complete_holdings = complete_holdings.ffill()  # Forward fill historical values
+    complete_holdings = complete_holdings.ffill()
     
-    # Add simulated data after last historical date
-    last_historical_date = historical_df['Reported'].max()
-    complete_holdings[simulation.index > last_historical_date] = simulation.loc[simulation.index > last_historical_date, 'btc_holdings']
+    # Add simulated data starting exactly from last historical value
+    first_sim_date = simulation.index[0]
+    complete_holdings[first_sim_date:] = simulation['btc_holdings']
 
     # Update simulation's BTC holdings to match complete series
     simulation['btc_holdings'] = complete_holdings[simulation.index]
