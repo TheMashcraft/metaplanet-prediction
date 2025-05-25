@@ -209,7 +209,7 @@ def simulate_through_2030(btc_data, meta_3350_data, initial_shares, btc_holdings
     prev_stock_price = float(meta_3350_data['Close'].iloc[-1] if not meta_3350_data.empty else 5.0)
     
     # Initialize mNAV based on both models
-    initial_btc_nav = current_btc * simulation.loc[simulation.index[0], 'btc_price']
+    initial_btc_nav = current_btc * simulation['btc_price'].iloc[0]  # Use iloc instead of direct indexing
     theoretical_mcap = 35.1221 * (initial_btc_nav ** 0.89)  # Power law model
     initial_mnav = theoretical_mcap / initial_btc_nav
     prev_mnav = initial_mnav
@@ -361,7 +361,7 @@ def plot_simulation_results(simulation):
     # Replace volume plot with dilution plot
     ax6 = fig.add_subplot(gs[2, 1])
     diluted_shares = simulation['shares_outstanding'].diff()
-    diluted_shares[0] = 0  # Set first day's dilution to 0
+    diluted_shares.iloc[0] = 0  # Set first day's dilution to 0 using iloc
     ax6.plot(simulation.index, diluted_shares, 'g-', label='Daily Share Dilution', linewidth=2)
     ax6.set_ylabel('Shares Issued')
     ax6.set_title('Daily Share Dilution')
