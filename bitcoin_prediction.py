@@ -8,9 +8,9 @@ def btc_power_law_formula(index):
     genesis = pd.Timestamp('2009-01-03')
     days_since_genesis = (index - genesis).days.values.astype(float)
     days_since_genesis[days_since_genesis < 1] = 1
-    price = 10**-17 * (days_since_genesis ** 5.8)
+    price = 10**-17 * (days_since_genesis ** 5.85)
     support = 0.5 * price
-    resistance = 2.0 * price
+    resistance = 3.0 * price
     return support, price, resistance
 
 def weierstrass_function(t, a=0.5, b=3, n_terms=10):
@@ -43,10 +43,11 @@ def predict_bitcoin_prices(start_date, end_date, last_price):
     _, future_center, _ = btc_power_law_formula(future_dates)
     
     t = np.arange(len(future_df))
+    # Increased Weierstrass weights by 10%
     configs = [
-        {'a': 0.5, 'b': 3, 'n_terms': 10, 'weight': 1.0, 'scale': 1/365},
-        {'a': 0.8, 'b': 2.5, 'n_terms': 8, 'weight': 0.7, 'scale': 1/1460},
-        {'a': 0.3, 'b': 2.2, 'n_terms': 6, 'weight': 0.5, 'scale': 1/90},
+        {'a': 0.5, 'b': 3, 'n_terms': 10, 'weight': 0.363, 'scale': 1/730},  # Increased by 10%
+        {'a': 0.8, 'b': 2.5, 'n_terms': 8, 'weight': 0.242, 'scale': 1/1825},  # Increased by 10%
+        {'a': 0.3, 'b': 2.2, 'n_terms': 6, 'weight': 0.121, 'scale': 1/180}   # Increased by 10%
     ]
     w = multi_weierstrass(t, configs)
     
@@ -72,26 +73,26 @@ def predict_bitcoin_prices(start_date, end_date, last_price):
     # Smooth transition period (90 days)
     for i in range(1, len(future_df)):
         if i < transition_days:
-            # Blend between regression and power law prediction
+            # More weight on power law during transition
             trend_price = initial_price + (initial_trend * i)
             power_law_price = future_center[i]
-            blend_factor = (i / transition_days) ** 2  # Quadratic blending
+            blend_factor = (i / transition_days) ** 1.5  # Changed from quadratic to favor power law
             base_price = (1 - blend_factor) * trend_price + blend_factor * power_law_price
             
-            # Add reduced volatility during transition
-            volatility_factor = blend_factor  # Gradually increase volatility
+            # Increased volatility overall
+            volatility_factor = blend_factor * 0.55  # Increased from 0.5
             osc = w[i] * volatility_factor
-            amplitude = 0.7 * base_price * volatility_factor
+            amplitude = 0.44 * base_price * volatility_factor  # Increased from 0.4
             prices[i] = base_price + osc * amplitude
         else:
-            # Full power law model after transition
+            # More power law influence but slightly more volatility
             base_price = future_center[i]
-            osc = w[i]
-            amplitude = 0.7 * base_price
+            osc = w[i] * 0.55  # Increased from 0.5
+            amplitude = 0.44 * base_price  # Increased from 0.4
             prices[i] = base_price + osc * amplitude
 
         # Ensure no negative prices and limit daily changes
-        max_daily_change = 0.20  # 20% max daily change
+        max_daily_change = 0.22  # Increased from 0.20
         if i > 0:
             min_price = prices[i-1] * (1 - max_daily_change)
             max_price = prices[i-1] * (1 + max_daily_change)

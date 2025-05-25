@@ -175,6 +175,12 @@ def simulate_through_2030(btc_data, meta_3350_data, initial_shares, btc_holdings
     base_volume = meta_3350_data['Volume_Trend'].iloc[-1]
     volume_growth = meta_3350_data['Volume_Growth'].iloc[-1]
     
+    # Add dilution cycle counter
+    days_since_dilution = 0
+    
+    # Initialize shares outstanding with constant value for historical dates
+    simulation['shares_outstanding'] = initial_shares
+    
     for date in simulation.index:
         btc_price = simulation.loc[date, 'btc_price']
         btc_value = current_btc * btc_price
@@ -206,20 +212,24 @@ def simulate_through_2030(btc_data, meta_3350_data, initial_shares, btc_holdings
         # Stock price calculation using combined mNAV
         stock_price = (btc_value * current_mnav) / current_shares
         
-        # Dilution check - only on 2% price increases with fixed 0.3% dilution
-        price_increase = (stock_price / prev_stock_price - 1) if prev_stock_price > 0 else 0
-        if price_increase > 0.02:
-            new_shares = current_shares * 0.003  # Fixed 0.3% dilution
-            funds_raised = new_shares * stock_price
-            btc_purchased = funds_raised / btc_price
+        # Only apply dilution after start date
+        if date >= sim_start:
+            days_since_dilution += 1
+            price_increase = (stock_price / prev_stock_price - 1) if prev_stock_price > 0 else 0
+            if days_since_dilution >= 3 and stock_price >= prev_stock_price:
+                new_shares = daily_volume * 0.003  # 0.3% of daily volume
+                funds_raised = new_shares * stock_price
+                btc_purchased = funds_raised / btc_price
+                
+                current_shares += new_shares
+                current_btc += btc_purchased
+                days_since_dilution = 0  # Reset counter after dilution
             
-            current_shares += new_shares
-            current_btc += btc_purchased
+            simulation.loc[date, 'shares_outstanding'] = current_shares
         
         # Store simulation results
         simulation.loc[date, 'stock_price'] = stock_price
         simulation.loc[date, 'volume'] = daily_volume
-        simulation.loc[date, 'shares_outstanding'] = current_shares
         simulation.loc[date, 'btc_holdings'] = current_btc
         simulation.loc[date, 'mnav'] = current_mnav
         
